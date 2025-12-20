@@ -1,10 +1,13 @@
-"""Dublin Rental Hunter - Main entry point."""
+"""Dublin Rental Hunter - Main application entry point."""
 
+import argparse
 import logging
 import os
+import signal
 import sys
+import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 import schedule
@@ -13,77 +16,46 @@ from dotenv import load_dotenv
 
 from core.aggregator import ListingAggregator
 from core.database import Database
-from notifications.ntfy_sender import NtfySender
 from notifications.email_sender import EmailSender
+from notifications.ntfy_sender import NtfySender
+from server.app import run_server
 
 
-def setup_logging(config: dict) -> None:
-    """Configure logging based on config settings.
+def setup_logging(level=logging.INFO):
+    """Set up logging with console and file handlers.
 
     Args:
-        config: Application configuration.
-    """
-    log_config = config.get("logging", {})
-    log_level = getattr(logging, log_config.get("level", "INFO").upper(), logging.INFO)
-    log_file = log_config.get("file", "logs/rental_hunter.log")
+        level: Logging level (default: INFO).
 
+    Returns:
+        Configured logger instance.
+    """
     # Create logs directory if needed
-    log_path = Path(log_file)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
+    logs_dir = Path("logs")
+    logs_dir.mkdir(exist_ok=True)
 
-    # Configure logging
-    logging.basicConfig(
-        level=log_level,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        handlers=[
-            logging.FileHandler(log_file),
-            logging.StreamHandler(sys.stdout),
-        ],
-    )
+    # Configure root logger
+    logger = logging.getLogger()
+    logger.setLevel(level)
 
+    # Clear existing handlers
+    logger.handlers = []
 
-def load_config() -> dict:
-    """Load configuration from YAML file.
+    # Console handler with simple format
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(level)
+    console_format = logging.Formatter("[%(levelname)s] %(message)s")
+    console_handler.setFormatter(console_format)
+    logger.addHandler(console_handler)
 
-    Returns:
-        Configuration dictionary.
-    """
-    config_path = Path(__file__).parent / "config" / "config.yaml"
-    with open(config_path, "r") as f:
-        return yaml.safe_load(f)
+    # File handler with full timestamp
+    file_handler = logging.FileHandler(logs_dir / "rental_hunter.log")
+    file_handler.setLevel(level)
+    file_format = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    file_handler.setFormatter(file_format)
+    logger.addHandler(file_handler)
 
-
-def is_quiet_hours(config: dict) -> bool:
-    """Check if current time is within quiet hours.
-
-    Args:
-        config: Application configuration.
-
-    Returns:
-        True if in quiet hours and notifications should be suppressed.
-    """
-    schedule_config = config.get("schedule", {})
-    quiet_config = schedule_config.get("quiet_hours", {})
-
-    if not quiet_config.get("enabled", False):
-        return False
-
-    try:
-        start_str = quiet_config.get("start", "23:00")
-        end_str = quiet_config.get("end", "07:00")
-
-        now = datetime.now().time()
-        start = datetime.strptime(start_str, "%H:%M").time()
-        end = datetime.strptime(end_str, "%H:%M").time()
-
-        # Handle overnight quiet hours (e.g., 23:00 to 07:00)
-        if start > end:
-            return now >= start or now <= end
-        else:
-            return start <= now <= end
-
-    except Exception:
-        return False
+    return logger
 
 
 class RentalHunter:
@@ -95,10 +67,17 @@ class RentalHunter:
         load_dotenv()
 
         # Load configuration
-        self.config = load_config()
+        config_path = Path(__file__).parent / "config" / "config.yaml"
+        with open(config_path) as f:
+            self.config = yaml.safe_load(f)
 
         # Set up logging
-        setup_logging(self.config)
+        log_level = getattr(
+            logging,
+            self.config.get("logging", {}).get("level", "INFO").upper(),
+            logging.INFO,
+        )
+        setup_logging(log_level)
         self.logger = logging.getLogger(self.__class__.__name__)
 
         self.logger.info("=" * 50)
@@ -109,159 +88,222 @@ class RentalHunter:
         db_path = self.config.get("database", {}).get("path", "data/rentals.db")
         self.database = Database(db_path)
 
-        # Initialize aggregator (handles scrapers and filtering internally)
+        # Initialize notification senders
+        self.ntfy_sender = NtfySender(self.config)
+        self.email_sender = EmailSender(self.config)
+
+        # Initialize aggregator
         self.aggregator = ListingAggregator(self.config, self.database)
 
-        # Initialize notifiers
-        self.ntfy = None
-        self.email = None
+        # State
+        self.running = True
+        self.server_thread = None
 
-        if self.config.get("ntfy", {}).get("enabled", False):
-            self.ntfy = NtfySender(self.config)
-            self.logger.info("ntfy notifications enabled")
-
-        if self.config.get("email", {}).get("enabled", False):
-            self.email = EmailSender(self.config)
-            self.logger.info("Email notifications enabled")
-
-        # Get server base URL for action buttons
+        # Determine server base URL for action buttons
         server_config = self.config.get("server", {})
-        if server_config.get("enabled", False):
-            host = os.getenv("SERVER_HOST", "localhost")
+        if server_config.get("enabled", True):
             port = server_config.get("port", 5151)
-            self.server_base_url = f"http://{host}:{port}"
+            self.server_base_url = os.getenv("SERVER_URL", f"http://localhost:{port}")
         else:
             self.server_base_url = None
 
-        # Schedule configuration
-        self.interval_minutes = self.config.get("schedule", {}).get("interval_minutes", 10)
-
-        self.logger.info(f"Scrape interval: {self.interval_minutes} minutes")
         self.logger.info(f"Active filters: {self.aggregator.filter_manager.get_active_criteria_names()}")
 
-    def run_scrape(self) -> None:
-        """Run a single scrape cycle."""
-        self.logger.info("-" * 40)
-        self.logger.info("Starting scrape cycle...")
+    def start_server(self):
+        """Start Flask server in background thread."""
+        if self.config.get("server", {}).get("enabled", True):
+            self.server_thread = threading.Thread(
+                target=run_server,
+                args=(self.database, self.email_sender, self.ntfy_sender, self.config),
+                daemon=True,
+            )
+            self.server_thread.start()
+            port = self.config.get("server", {}).get("port", 5151)
+            self.logger.info(f"Server started on port {port}")
+
+    def run_once(self) -> dict:
+        """Run a single scrape cycle.
+
+        Returns:
+            Dictionary with found and notified counts.
+        """
+        self.logger.info("Starting scan...")
+
+        # Get new listings
+        new_listings = self.aggregator.process_new_listings()
+
+        if not new_listings:
+            self.logger.info("No new matching listings found")
+            return {"found": 0, "notified": 0}
+
+        self.logger.info(f"Found {len(new_listings)} new matching listings")
+
+        # Check quiet hours
+        if self._is_quiet_hours():
+            self.logger.info("Quiet hours - skipping notifications")
+            return {"found": len(new_listings), "notified": 0}
+
+        # Send notifications
+        notified = 0
+        for listing in new_listings:
+            listing_dict = listing.to_dict()
+            if self.ntfy_sender.send_listing(listing_dict, self.server_base_url):
+                self.database.mark_notified(listing_dict["id"])
+                notified += 1
+            time.sleep(1)  # Rate limit notifications
+
+        self.logger.info(f"Sent {notified} notifications")
+        return {"found": len(new_listings), "notified": notified}
+
+    def _is_quiet_hours(self) -> bool:
+        """Check if current time is within quiet hours.
+
+        Returns:
+            True if in quiet hours and notifications should be suppressed.
+        """
+        quiet_config = self.config.get("schedule", {}).get("quiet_hours", {})
+
+        if not quiet_config.get("enabled", False):
+            return False
 
         try:
-            # Get new listings that pass filters
-            new_listings = self.aggregator.process_new_listings()
+            start_str = quiet_config.get("start", "23:00")
+            end_str = quiet_config.get("end", "07:00")
 
-            if not new_listings:
-                self.logger.info("No new matching listings found")
-                return
+            now = datetime.now().time()
+            start = datetime.strptime(start_str, "%H:%M").time()
+            end = datetime.strptime(end_str, "%H:%M").time()
 
-            self.logger.info(f"Found {len(new_listings)} new matching listings")
+            # Handle overnight quiet hours (e.g., 23:00 to 07:00)
+            if start > end:
+                return now >= start or now <= end
+            else:
+                return start <= now <= end
 
-            # Check quiet hours
-            if is_quiet_hours(self.config):
-                self.logger.info("In quiet hours - skipping notifications")
-                return
+        except Exception:
+            return False
 
-            # Send notifications
-            if self.ntfy:
-                for listing in new_listings:
-                    listing_dict = listing.to_dict()
+    def run_daemon(self):
+        """Run continuously on schedule."""
+        # Start server
+        self.start_server()
 
-                    if self.ntfy.send_listing(listing_dict, self.server_base_url):
-                        self.database.mark_notified(listing.id)
-
-        except Exception as e:
-            self.logger.error(f"Error during scrape cycle: {e}")
-
-    def send_daily_stats(self) -> None:
-        """Send daily statistics summary."""
-        if not self.ntfy:
-            return
-
-        try:
-            stats = self.aggregator.get_stats()
-            self.ntfy.send_stats(stats.get("database", {}))
-            self.logger.info("Sent daily stats notification")
-        except Exception as e:
-            self.logger.error(f"Error sending stats: {e}")
-
-    def reset_email_limit(self) -> None:
-        """Reset email rate limit counter."""
-        if self.email:
-            self.email.reset_rate_limit()
-
-    def run(self) -> None:
-        """Run the rental hunter main loop."""
-        self.logger.info("Dublin Rental Hunter started!")
-
-        # Run initial scrape
-        self.run_scrape()
-
-        # Schedule periodic scrapes
-        schedule.every(self.interval_minutes).minutes.do(self.run_scrape)
-
-        # Schedule daily stats at 9 AM
-        schedule.every().day.at("09:00").do(self.send_daily_stats)
+        # Schedule scraping
+        interval = self.config.get("schedule", {}).get("interval_minutes", 10)
+        schedule.every(interval).minutes.do(self.run_once)
 
         # Schedule hourly email rate limit reset
-        schedule.every().hour.do(self.reset_email_limit)
+        schedule.every().hour.do(self.email_sender.reset_rate_limit)
 
-        self.logger.info(f"Scheduled: scrape every {self.interval_minutes} minutes")
-        self.logger.info("Scheduled: daily stats at 09:00")
+        self.logger.info(f"Daemon started. Scanning every {interval} minutes.")
+
+        # Run immediately on start
+        self.run_once()
 
         # Main loop
-        try:
-            while True:
-                schedule.run_pending()
-                time.sleep(30)  # Check schedule every 30 seconds
+        while self.running:
+            schedule.run_pending()
+            time.sleep(1)
 
-        except KeyboardInterrupt:
-            self.logger.info("\nShutdown requested...")
-        except Exception as e:
-            self.logger.error(f"Fatal error: {e}")
-        finally:
-            self.logger.info("Dublin Rental Hunter stopped")
-
-    def test_notifications(self) -> None:
-        """Test notification services."""
-        self.logger.info("Testing notifications...")
-
-        if self.ntfy:
-            if self.ntfy.test():
-                self.logger.info("✓ ntfy test successful")
-            else:
-                self.logger.error("✗ ntfy test failed")
-
-        if self.email:
-            success, message = self.email.send_test()
-            if success:
-                self.logger.info(f"✓ Email test successful: {message}")
-            else:
-                self.logger.error(f"✗ Email test failed: {message}")
+    def stop(self):
+        """Graceful shutdown."""
+        self.logger.info("Shutting down...")
+        self.running = False
 
 
 def main():
-    """Main entry point."""
-    hunter = RentalHunter()
+    """Main entry point with CLI."""
+    parser = argparse.ArgumentParser(description="Dublin Rental Hunter")
+    subparsers = parser.add_subparsers(dest="command", help="Commands")
 
-    # Check for command line arguments
-    if len(sys.argv) > 1:
-        if sys.argv[1] == "--test":
-            hunter.test_notifications()
-            return
-        elif sys.argv[1] == "--once":
-            hunter.run_scrape()
-            return
-        elif sys.argv[1] == "--stats":
-            stats = hunter.aggregator.get_stats()
-            print("\n📊 Database Statistics:")
-            print(f"  Scrapers enabled: {stats['scrapers']['enabled']}")
-            db = stats.get("database", {})
-            print(f"  Total listings: {db.get('total', {}).get('all_time', 0)}")
-            print(f"  Last 24h: {db.get('total', {}).get('last_24h', 0)}")
-            print(f"  Notified: {db.get('notified', {}).get('all_time', 0)}")
-            print(f"  Contacted: {db.get('contacted', {}).get('all_time', 0)}")
-            return
+    # run command - single scan
+    subparsers.add_parser("run", help="Run a single scan")
 
-    # Run main loop
-    hunter.run()
+    # daemon command - continuous
+    subparsers.add_parser("daemon", help="Run continuously")
+
+    # test-ntfy command
+    subparsers.add_parser("test-ntfy", help="Send test notification")
+
+    # test-email command
+    subparsers.add_parser("test-email", help="Send test email")
+
+    # stats command
+    subparsers.add_parser("stats", help="Show statistics")
+
+    # list command
+    list_parser = subparsers.add_parser("list", help="List recent listings")
+    list_parser.add_argument("--hours", type=int, default=24, help="Hours to look back")
+
+    args = parser.parse_args()
+
+    # Handle commands
+    if args.command == "run":
+        hunter = RentalHunter()
+        hunter.run_once()
+
+    elif args.command == "daemon":
+        hunter = RentalHunter()
+
+        # Set up signal handlers
+        def signal_handler(sig, frame):
+            hunter.stop()
+
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+        hunter.run_daemon()
+
+    elif args.command == "test-ntfy":
+        load_dotenv()
+        with open("config/config.yaml") as f:
+            config = yaml.safe_load(f)
+        ntfy = NtfySender(config)
+        if ntfy.test():
+            print("ntfy test successful!")
+        else:
+            print("ntfy test failed")
+
+    elif args.command == "test-email":
+        load_dotenv()
+        with open("config/config.yaml") as f:
+            config = yaml.safe_load(f)
+        email = EmailSender(config)
+        success, msg = email.send_test()
+        if success:
+            print(f"Email test successful! {msg}")
+        else:
+            print(f"Email test failed: {msg}")
+
+    elif args.command == "stats":
+        hunter = RentalHunter()
+        stats = hunter.database.get_stats()
+        total = stats.get("total", {})
+        notified = stats.get("notified", {})
+        contacted = stats.get("contacted", {})
+        print("\nStatistics:")
+        print(f"  Total listings: {total.get('all_time', 0)}")
+        print(f"  Notified: {notified.get('all_time', 0)}")
+        print(f"  Contacted: {contacted.get('all_time', 0)}")
+        print(f"  Last 24h: {total.get('last_24h', 0)}")
+
+    elif args.command == "list":
+        hunter = RentalHunter()
+        listings = hunter.database.get_recent_listings(args.hours)
+        print(f"\nListings from last {args.hours} hours:\n")
+        for listing in listings:
+            if listing.get("contacted_at"):
+                status = "[contacted]"
+            elif listing.get("notified_at"):
+                status = "[notified]"
+            else:
+                status = "[new]"
+            price = listing.get("price", "?")
+            title = listing.get("title", "Unknown")[:50]
+            print(f"{status} E{price}/mo - {title}")
+            print(f"   {listing.get('url', 'No URL')}\n")
+
+    else:
+        parser.print_help()
 
 
 if __name__ == "__main__":
