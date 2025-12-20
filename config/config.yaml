@@ -1,43 +1,210 @@
+# =============================================================================
 # Dublin Rental Hunter Configuration
+# =============================================================================
+# This file contains all settings for the rental hunter application.
+# Customize each section according to your preferences.
+# =============================================================================
 
-# Search criteria
-search:
-  min_price: 1000
-  max_price: 2500
-  min_bedrooms: 1
-  max_bedrooms: 3
-  locations:
-    - Dublin City Centre
-    - Dublin 2
-    - Dublin 4
-  property_types:
-    - apartment
-    - house
+# -----------------------------------------------------------------------------
+# User Information
+# -----------------------------------------------------------------------------
+# Your contact details for notifications and landlord inquiries
+user:
+  name: "Your Name"
+  email: "your.email@example.com"
+  phone: "+353 XX XXX XXXX"
 
-# Scraper settings
+# -----------------------------------------------------------------------------
+# Search Configurations
+# -----------------------------------------------------------------------------
+# Define multiple search profiles. Each search can have different criteria.
+# You can enable/disable searches independently using the 'active' flag.
+searches:
+  - name: "City Centre Apartment"
+    active: true
+
+    # Price range in EUR per month
+    max_price: 2000
+    min_price: 0  # Optional, defaults to 0
+
+    # Bedroom requirements
+    min_beds: 1
+    max_beds: 2
+
+    # Areas to search (Dublin postcodes or neighborhood names)
+    # Common Dublin areas: Dublin 1-24, Rathmines, Ranelagh, Portobello,
+    # Drumcondra, Phibsborough, Smithfield, Stoneybatter, etc.
+    areas:
+      - "Dublin 2"
+      - "Dublin 4"
+      - "Dublin 6"
+      - "Dublin 8"
+      - "Rathmines"
+      - "Ranelagh"
+      - "Portobello"
+
+    # Property types to include
+    # Options: apartment, house, studio, flat, duplex, bungalow
+    property_types:
+      - apartment
+      - flat
+      - studio
+
+    # Features that MUST be present (listing skipped if missing)
+    # Common options: furnished, parking, balcony, garden, pets allowed,
+    # washing machine, dishwasher, dryer, wifi, central heating
+    must_have:
+      - furnished
+
+    # Features that are preferred but not required
+    # Listings with these features will be highlighted
+    nice_to_have:
+      - dishwasher
+      - balcony
+      - parking
+
+    # Keywords that will cause a listing to be skipped
+    # Useful for filtering out shares, specific conditions, etc.
+    exclude_keywords:
+      - "sharing"
+      - "shared room"
+      - "couple only"
+      - "females only"
+      - "males only"
+      - "student only"
+
+  # Example of a second search profile (disabled by default)
+  - name: "House in Suburbs"
+    active: false
+    max_price: 2500
+    min_price: 1500
+    min_beds: 2
+    max_beds: 3
+    areas:
+      - "Dublin 14"
+      - "Dublin 16"
+      - "Dundrum"
+      - "Stillorgan"
+    property_types:
+      - house
+      - duplex
+    must_have:
+      - parking
+      - garden
+    nice_to_have:
+      - garage
+      - pets allowed
+    exclude_keywords:
+      - "sharing"
+
+# -----------------------------------------------------------------------------
+# Scraper Settings
+# -----------------------------------------------------------------------------
+# Configure which property websites to scrape and their rate limits.
+# Rate limiting prevents your IP from being blocked.
 scrapers:
   daft:
     enabled: true
-    base_url: "https://www.daft.ie"
+    # Seconds to wait between requests to Daft.ie
+    rate_limit_seconds: 2
+
   rent_ie:
     enabled: true
-    base_url: "https://www.rent.ie"
+    # Rent.ie uses RSS feeds, so rate limiting is less critical
+    rate_limit_seconds: 1
+
   myhome:
+    enabled: false  # MyHome.ie scraper not yet implemented
+    rate_limit_seconds: 2
+
+# -----------------------------------------------------------------------------
+# Schedule Settings
+# -----------------------------------------------------------------------------
+# Control when and how often the scraper runs
+schedule:
+  # How often to check for new listings (in minutes)
+  # Lower values = more API calls, higher chance of rate limiting
+  # Recommended: 10-30 minutes
+  interval_minutes: 10
+
+  # Quiet hours - no notifications during these times
+  # Useful to avoid being woken up at night
+  # Times in 24-hour format (HH:MM)
+  quiet_hours:
     enabled: true
-    base_url: "https://www.myhome.ie"
+    start: "23:00"  # Stop notifications at 11 PM
+    end: "07:00"    # Resume notifications at 7 AM
 
-# Notification settings
-notifications:
-  ntfy:
-    enabled: false
-  email:
-    enabled: false
-    smtp_server: "smtp.gmail.com"
-    smtp_port: 587
+# -----------------------------------------------------------------------------
+# ntfy Notification Settings
+# -----------------------------------------------------------------------------
+# ntfy.sh is a simple pub-sub notification service
+# Install the ntfy app on your phone and subscribe to your topic
+# Docs: https://ntfy.sh
+ntfy:
+  enabled: true
 
-# Database settings
+  # Your unique topic name - anyone who knows this can see your notifications
+  # Use something unique like: dublin-rentals-yourname-2024
+  topic: "dublin-rentals"
+
+  # ntfy server URL (default public server, or self-hosted)
+  server: "https://ntfy.sh"
+
+  # Notification priority: min, low, default, high, urgent
+  # High priority will bypass Do Not Disturb on most phones
+  priority: "high"
+
+# -----------------------------------------------------------------------------
+# Email Settings
+# -----------------------------------------------------------------------------
+# Optional email notifications (in addition to or instead of ntfy)
+# For Gmail, you need to generate an App Password:
+# https://support.google.com/accounts/answer/185833
+email:
+  enabled: false
+  smtp_server: "smtp.gmail.com"
+  smtp_port: 587
+
+  # These should be set in .env file for security, not here
+  # username and password are loaded from environment variables
+  username: "${GMAIL_ADDRESS}"
+  password: "${GMAIL_APP_PASSWORD}"
+
+  # Email recipient (usually same as sender for personal use)
+  recipient: "${GMAIL_ADDRESS}"
+
+# -----------------------------------------------------------------------------
+# Web Server Settings
+# -----------------------------------------------------------------------------
+# Small Flask server for viewing listings and approval buttons
+server:
+  enabled: true
+  host: "0.0.0.0"  # Listen on all interfaces
+  port: 5151
+
+  # Enable debug mode (disable in production)
+  debug: false
+
+# -----------------------------------------------------------------------------
+# Database Settings
+# -----------------------------------------------------------------------------
+# SQLite database for tracking seen listings
 database:
-  path: "rentals.db"
+  path: "data/rentals.db"
 
-# Scraping interval (in minutes)
-scrape_interval: 30
+  # Automatically clean up listings older than X days
+  cleanup_days: 30
+
+# -----------------------------------------------------------------------------
+# Logging Settings
+# -----------------------------------------------------------------------------
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  file: "logs/rental_hunter.log"
+
+  # Maximum log file size before rotation (in MB)
+  max_size_mb: 10
+
+  # Number of backup log files to keep
+  backup_count: 3
