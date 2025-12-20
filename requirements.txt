@@ -4,8 +4,15 @@ daftlistings>=2.0.0
 # Parsing RSS feeds from Rent.ie
 feedparser>=6.0.0
 
+# Date parsing for RSS feeds
+python-dateutil>=2.8.0
+
 # HTTP requests for scrapers and ntfy
 requests>=2.28.0
+
+# HTML parsing for MyHome.ie scraper
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
 
 # Loading environment variables
 python-dotenv>=1.0.0
