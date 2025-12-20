@@ -1,0 +1,21 @@
+Subject: New Rental Listing Found - {title}
+
+Hello,
+
+A new rental property matching your criteria has been found:
+
+Property Details:
+-----------------
+Title: {title}
+Price: €{price}/month
+Location: {location}
+Bedrooms: {bedrooms}
+Property Type: {property_type}
+
+Description:
+{description}
+
+View Listing: {url}
+
+---
+This notification was sent by Dublin Rental Hunter.

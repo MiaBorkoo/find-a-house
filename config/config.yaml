@@ -1,0 +1,43 @@
+# Dublin Rental Hunter Configuration
+
+# Search criteria
+search:
+  min_price: 1000
+  max_price: 2500
+  min_bedrooms: 1
+  max_bedrooms: 3
+  locations:
+    - Dublin City Centre
+    - Dublin 2
+    - Dublin 4
+  property_types:
+    - apartment
+    - house
+
+# Scraper settings
+scrapers:
+  daft:
+    enabled: true
+    base_url: "https://www.daft.ie"
+  rent_ie:
+    enabled: true
+    base_url: "https://www.rent.ie"
+  myhome:
+    enabled: true
+    base_url: "https://www.myhome.ie"
+
+# Notification settings
+notifications:
+  telegram:
+    enabled: false
+  email:
+    enabled: false
+    smtp_server: "smtp.gmail.com"
+    smtp_port: 587
+
+# Database settings
+database:
+  path: "rentals.db"
+
+# Scraping interval (in minutes)
+scrape_interval: 30
