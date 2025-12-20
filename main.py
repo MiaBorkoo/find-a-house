@@ -11,7 +11,7 @@ from scrapers.myhome_scraper import MyHomeScraper
 from core.database import Database
 from core.filter import ListingFilter
 from core.aggregator import ListingAggregator
-from notifications.telegram_bot import TelegramNotifier
+from notifications.ntfy_sender import NtfyNotifier
 from notifications.email_sender import EmailNotifier
 
 
@@ -52,8 +52,8 @@ def main():
     notifiers = []
     notification_config = config.get("notifications", {})
 
-    if notification_config.get("telegram", {}).get("enabled"):
-        notifiers.append(TelegramNotifier(notification_config["telegram"]))
+    if notification_config.get("ntfy", {}).get("enabled"):
+        notifiers.append(NtfyNotifier(notification_config["ntfy"]))
     if notification_config.get("email", {}).get("enabled"):
         notifiers.append(EmailNotifier(notification_config["email"]))
 

@@ -28,7 +28,7 @@ scrapers:
 
 # Notification settings
 notifications:
-  telegram:
+  ntfy:
     enabled: false
   email:
     enabled: false
