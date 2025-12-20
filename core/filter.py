@@ -2,162 +2,223 @@
 
 import logging
 import re
-from dataclasses import dataclass
-from typing import Optional, Union
 
 from scrapers.base_scraper import Listing
 
 
-@dataclass
-class MatchResult:
-    """Result of a filter match check."""
+class ListingFilter:
+    """Filter for checking if a listing matches search criteria."""
 
-    matches: bool
-    reason: str = ""
-    search_name: str = ""
-
-
-class SearchFilter:
-    """Filter for a single search profile."""
-
-    def __init__(self, search_config: dict):
-        """Initialize filter with search configuration.
+    def __init__(self, criteria: dict):
+        """Initialize filter with search criteria.
 
         Args:
-            search_config: Single search profile from config.
+            criteria: Search criteria dictionary from config.
         """
-        self.name = search_config.get("name", "Unnamed Search")
-        self.active = search_config.get("active", True)
+        self.criteria = criteria
+        self.name = criteria.get("name", "Unnamed")
+        self.logger = logging.getLogger(f"ListingFilter:{self.name}")
 
         # Price criteria
-        self.min_price = search_config.get("min_price", 0)
-        self.max_price = search_config.get("max_price", float("inf"))
+        self.min_price = criteria.get("min_price", 0)
+        self.max_price = criteria.get("max_price", float("inf"))
 
         # Bedroom criteria
-        self.min_beds = search_config.get("min_beds", 0)
-        self.max_beds = search_config.get("max_beds", float("inf"))
+        self.min_beds = criteria.get("min_beds", 0)
+        self.max_beds = criteria.get("max_beds", float("inf"))
 
         # Location criteria
-        self.areas = [a.lower() for a in search_config.get("areas", [])]
+        self.areas = [a.lower() for a in criteria.get("areas", [])]
 
         # Property type criteria
-        self.property_types = [p.lower() for p in search_config.get("property_types", [])]
+        self.property_types = [p.lower() for p in criteria.get("property_types", [])]
 
-        # Feature requirements
-        self.must_have = [f.lower() for f in search_config.get("must_have", [])]
-        self.nice_to_have = [f.lower() for f in search_config.get("nice_to_have", [])]
+        # Required features
+        self.must_have = [f.lower() for f in criteria.get("must_have", [])]
 
         # Exclusion keywords
-        self.exclude_keywords = [k.lower() for k in search_config.get("exclude_keywords", [])]
+        self.exclude_keywords = [k.lower() for k in criteria.get("exclude_keywords", [])]
 
-        self.logger = logging.getLogger(f"SearchFilter:{self.name}")
-
-    def matches(self, listing: Union[Listing, dict]) -> MatchResult:
-        """Check if a listing matches this search filter.
+    def matches(self, listing: Listing) -> tuple[bool, str]:
+        """Check if a listing matches all criteria.
 
         Args:
-            listing: Listing object or dictionary to check.
+            listing: Listing to check.
 
         Returns:
-            MatchResult with match status and reason if rejected.
+            Tuple of (matches, reason). If matches is False, reason explains why.
         """
-        # Handle both Listing objects and dicts
-        if isinstance(listing, Listing):
-            price = listing.price
-            bedrooms = listing.bedrooms
-            area = listing.area.lower() if listing.area else ""
-            address = listing.address.lower() if listing.address else ""
-            property_type = listing.property_type.lower() if listing.property_type else ""
-            title = listing.title.lower() if listing.title else ""
-            description = listing.description.lower() if listing.description else ""
-            features = [f.lower() for f in (listing.features or [])]
-        else:
-            price = listing.get("price", 0)
-            bedrooms = listing.get("bedrooms", 0)
-            area = (listing.get("area", "") or "").lower()
-            address = (listing.get("address", "") or "").lower()
-            property_type = (listing.get("property_type", "") or "").lower()
-            title = (listing.get("title", "") or "").lower()
-            description = (listing.get("description", "") or "").lower()
-            features = [f.lower() for f in listing.get("features", [])]
+        # Check in order of importance
+        checks = [
+            self._check_price,
+            self._check_bedrooms,
+            self._check_area,
+            self._check_exclusions,
+            self._check_must_have,
+        ]
 
-        # Check price range
-        if price > 0:  # Only check if price is known
-            if price < self.min_price:
-                return MatchResult(False, f"Price €{price} below minimum €{self.min_price}")
-            if price > self.max_price:
-                return MatchResult(False, f"Price €{price} above maximum €{self.max_price}")
+        for check in checks:
+            passed, reason = check(listing)
+            if not passed:
+                return (False, reason)
 
-        # Check bedrooms
-        if bedrooms >= 0:  # -1 means unknown
-            if bedrooms < self.min_beds:
-                return MatchResult(False, f"{bedrooms} beds below minimum {self.min_beds}")
-            if bedrooms > self.max_beds:
-                return MatchResult(False, f"{bedrooms} beds above maximum {self.max_beds}")
+        return (True, "")
 
-        # Check area/location
-        if self.areas:
-            location_text = f"{area} {address}".strip()
-            if not self._matches_any_area(location_text):
-                return MatchResult(False, f"Location '{area or address}' not in target areas")
-
-        # Check property type
-        if self.property_types and property_type:
-            if not any(pt in property_type for pt in self.property_types):
-                return MatchResult(False, f"Property type '{property_type}' not in allowed types")
-
-        # Check exclude keywords
-        full_text = f"{title} {description}"
-        for keyword in self.exclude_keywords:
-            if keyword in full_text:
-                return MatchResult(False, f"Contains excluded keyword: '{keyword}'")
-
-        # Check must-have features
-        for required in self.must_have:
-            feature_text = f"{' '.join(features)} {description}"
-            if required not in feature_text:
-                return MatchResult(False, f"Missing required feature: '{required}'")
-
-        # All checks passed
-        return MatchResult(True, "", self.name)
-
-    def _matches_any_area(self, location_text: str) -> bool:
-        """Check if location matches any configured area.
+    def _check_price(self, listing: Listing) -> tuple[bool, str]:
+        """Check if listing price is within range.
 
         Args:
-            location_text: Combined area and address text.
+            listing: Listing to check.
 
         Returns:
-            True if matches any configured area.
+            Tuple of (passes, reason).
         """
+        # If price is unknown (0), give benefit of doubt
+        if listing.price == 0:
+            return (True, "")
+
+        if listing.price > self.max_price:
+            return (False, f"Price €{listing.price} > max €{self.max_price}")
+
+        if listing.price < self.min_price:
+            return (False, f"Price €{listing.price} < min €{self.min_price}")
+
+        return (True, "")
+
+    def _check_bedrooms(self, listing: Listing) -> tuple[bool, str]:
+        """Check if listing bedrooms are within range.
+
+        Args:
+            listing: Listing to check.
+
+        Returns:
+            Tuple of (passes, reason).
+        """
+        # If bedrooms unknown (-1), give benefit of doubt
+        if listing.bedrooms < 0:
+            return (True, "")
+
+        if listing.bedrooms < self.min_beds:
+            return (False, f"{listing.bedrooms} beds < min {self.min_beds}")
+
+        if listing.bedrooms > self.max_beds:
+            return (False, f"{listing.bedrooms} beds > max {self.max_beds}")
+
+        return (True, "")
+
+    def _check_area(self, listing: Listing) -> tuple[bool, str]:
+        """Check if listing is in an allowed area.
+
+        Args:
+            listing: Listing to check.
+
+        Returns:
+            Tuple of (passes, reason).
+        """
+        # If no areas configured, pass all
         if not self.areas:
-            return True
+            return (True, "")
 
-        location_lower = location_text.lower()
+        # Normalize listing area
+        listing_area = (listing.area or "").lower()
+        listing_address = (listing.address or "").lower()
+        location_text = f"{listing_area} {listing_address}"
 
         for area in self.areas:
-            # Direct match
-            if area in location_lower:
-                return True
+            # Direct substring match
+            if area in location_text:
+                return (True, "")
 
-            # Handle "Dublin X" variations
-            if area.startswith("dublin"):
-                # "dublin 2" should match "dublin2", "dublin 2", "d2"
-                area_num = area.replace("dublin", "").strip()
-                if area_num:
-                    patterns = [
-                        f"dublin\\s*{area_num}\\b",
-                        f"\\bd{area_num}\\b",
-                    ]
-                    for pattern in patterns:
-                        if re.search(pattern, location_lower):
-                            return True
+            # Check if location text contains the area
+            if location_text in area:
+                return (True, "")
+
+            # Handle Dublin variations: "D2" <-> "Dublin 2"
+            if self._areas_match(area, location_text):
+                return (True, "")
+
+        return (False, f"Area '{listing.area or listing.address}' not in allowed areas")
+
+    def _areas_match(self, config_area: str, location_text: str) -> bool:
+        """Check if areas match with Dublin variations.
+
+        Args:
+            config_area: Area from config (lowercase).
+            location_text: Combined area/address text (lowercase).
+
+        Returns:
+            True if areas match.
+        """
+        # Handle "Dublin X" variations
+        dublin_match = re.match(r"dublin\s*(\d+)", config_area)
+        if dublin_match:
+            num = dublin_match.group(1)
+            # Check for "dublin X", "dublinX", "d X", "dX"
+            patterns = [
+                rf"dublin\s*{num}\b",
+                rf"\bd{num}\b",
+                rf"\bd\s*{num}\b",
+            ]
+            for pattern in patterns:
+                if re.search(pattern, location_text):
+                    return True
+
+        # Handle "DX" in config matching "Dublin X"
+        d_match = re.match(r"d(\d+)", config_area)
+        if d_match:
+            num = d_match.group(1)
+            if re.search(rf"dublin\s*{num}\b", location_text):
+                return True
 
         return False
 
+    def _check_exclusions(self, listing: Listing) -> tuple[bool, str]:
+        """Check if listing contains any excluded keywords.
+
+        Args:
+            listing: Listing to check.
+
+        Returns:
+            Tuple of (passes, reason).
+        """
+        if not self.exclude_keywords:
+            return (True, "")
+
+        # Combine title and description
+        text = f"{listing.title or ''} {listing.description or ''}".lower()
+
+        for keyword in self.exclude_keywords:
+            if keyword in text:
+                return (False, f"Contains excluded keyword: '{keyword}'")
+
+        return (True, "")
+
+    def _check_must_have(self, listing: Listing) -> tuple[bool, str]:
+        """Check if listing has all required features.
+
+        Args:
+            listing: Listing to check.
+
+        Returns:
+            Tuple of (passes, reason).
+        """
+        if not self.must_have:
+            return (True, "")
+
+        # Combine features and description
+        features_text = " ".join(f.lower() for f in (listing.features or []))
+        description = (listing.description or "").lower()
+        combined = f"{features_text} {description}"
+
+        for feature in self.must_have:
+            if feature not in combined:
+                return (False, f"Missing required feature: '{feature}'")
+
+        return (True, "")
+
 
 class FilterManager:
-    """Manages multiple search filters and checks listings against them."""
+    """Manages multiple search filters."""
 
     def __init__(self, config: dict):
         """Initialize filter manager with configuration.
@@ -166,101 +227,55 @@ class FilterManager:
             config: Full application configuration.
         """
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.filters: list[SearchFilter] = []
+        self.filters: list[ListingFilter] = []
 
-        # Load all active search profiles
+        # Load all active search criteria
         searches = config.get("searches", [])
-        for search_config in searches:
-            if search_config.get("active", True):
+        for criteria in searches:
+            if criteria.get("active", True):
                 try:
-                    search_filter = SearchFilter(search_config)
-                    self.filters.append(search_filter)
-                    self.logger.info(f"Loaded search filter: {search_filter.name}")
+                    listing_filter = ListingFilter(criteria)
+                    self.filters.append(listing_filter)
+                    self.logger.info(f"Loaded filter: {listing_filter.name}")
                 except Exception as e:
-                    self.logger.error(f"Error loading search filter: {e}")
+                    self.logger.error(f"Error loading filter: {e}")
 
         if not self.filters:
             self.logger.warning("No active search filters configured")
 
-    def matches_any(self, listing: Union[Listing, dict]) -> MatchResult:
-        """Check if a listing matches any active search filter.
+    def matches_any(self, listing: Listing) -> bool:
+        """Check if a listing matches any active filter.
 
         Args:
             listing: Listing to check.
 
         Returns:
-            MatchResult with match status. If no filters configured, returns True.
+            True if listing matches at least one filter.
         """
-        # If no filters configured, accept all listings
+        # If no filters configured, accept all
         if not self.filters:
-            return MatchResult(True, "No filters configured", "default")
+            return True
 
-        # Check against each filter
-        rejection_reasons = []
+        first_reason = None
 
-        for search_filter in self.filters:
-            result = search_filter.matches(listing)
-            if result.matches:
-                return MatchResult(True, "", search_filter.name)
-            else:
-                rejection_reasons.append(f"{search_filter.name}: {result.reason}")
+        for listing_filter in self.filters:
+            matches, reason = listing_filter.matches(listing)
+            if matches:
+                self.logger.debug(f"Listing matches filter '{listing_filter.name}'")
+                return True
+            elif first_reason is None:
+                first_reason = f"{listing_filter.name}: {reason}"
 
-        # Didn't match any filter
-        # Return the first rejection reason for logging
-        return MatchResult(False, rejection_reasons[0] if rejection_reasons else "No match")
+        # Log first rejection reason
+        if first_reason:
+            self.logger.debug(f"Listing rejected - {first_reason}")
 
-    def matches_all(self, listing: Union[Listing, dict]) -> list[MatchResult]:
-        """Check which filters a listing matches.
+        return False
 
-        Args:
-            listing: Listing to check.
-
-        Returns:
-            List of MatchResults for each filter.
-        """
-        results = []
-        for search_filter in self.filters:
-            results.append(search_filter.matches(listing))
-        return results
-
-    def get_nice_to_have_score(self, listing: Union[Listing, dict]) -> int:
-        """Calculate how many nice-to-have features a listing has.
-
-        Args:
-            listing: Listing to score.
+    def get_active_criteria_names(self) -> list[str]:
+        """Get names of all active search criteria.
 
         Returns:
-            Count of nice-to-have features present.
+            List of filter names.
         """
-        score = 0
-
-        # Get listing features and description
-        if isinstance(listing, Listing):
-            features = [f.lower() for f in (listing.features or [])]
-            description = listing.description.lower() if listing.description else ""
-        else:
-            features = [f.lower() for f in listing.get("features", [])]
-            description = (listing.get("description", "") or "").lower()
-
-        feature_text = f"{' '.join(features)} {description}"
-
-        # Check each filter's nice-to-have list
-        for search_filter in self.filters:
-            for nice in search_filter.nice_to_have:
-                if nice in feature_text:
-                    score += 1
-
-        return score
-
-
-# Keep old class name for backward compatibility
-class ListingFilter(FilterManager):
-    """Deprecated: Use FilterManager instead."""
-
-    def __init__(self, config: dict):
-        super().__init__(config)
-        self.logger.warning("ListingFilter is deprecated, use FilterManager instead")
-
-    def filter_listings(self, listings: list) -> list:
-        """Filter listings - backward compatibility method."""
-        return [lst for lst in listings if self.matches_any(lst).matches]
+        return [f.name for f in self.filters]

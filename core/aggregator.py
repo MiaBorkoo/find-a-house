@@ -162,9 +162,7 @@ class ListingAggregator:
                     new_count += 1
 
                     # Check if passes any search filters
-                    match_result = self.filter_manager.matches_any(listing)
-
-                    if match_result.matches:
+                    if self.filter_manager.matches_any(listing):
                         new_listings.append(listing)
                         self.logger.debug(
                             f"New listing: {listing.title[:50]}... "
@@ -172,9 +170,7 @@ class ListingAggregator:
                         )
                     else:
                         filtered_count += 1
-                        self.logger.debug(
-                            f"Filtered out: {listing.title[:50]}... - {match_result.reason}"
-                        )
+                        self.logger.debug(f"Filtered out: {listing.title[:50]}...")
 
             except Exception as e:
                 self.logger.error(f"Error processing listing {listing.id}: {e}")
