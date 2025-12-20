@@ -1,21 +1,20 @@
-Subject: New Rental Listing Found - {title}
+SUBJECT: Rental Inquiry - {property_title}
 
-Hello,
+Dear Landlord/Agent,
 
-A new rental property matching your criteria has been found:
+I am writing to express my interest in the property at {property_title}, which I found on {source}.
 
-Property Details:
------------------
-Title: {title}
-Price: €{price}/month
-Location: {location}
-Bedrooms: {bedrooms}
-Property Type: {property_type}
+I am a working professional seeking a long-term rental in Dublin. I am a non-smoker with no pets, and I take pride in maintaining a clean and quiet home.
 
-Description:
-{description}
+I am available for viewings at your earliest convenience and can be flexible with scheduling, including evenings and weekends.
 
-View Listing: {url}
+I can provide employer references, previous landlord references, and proof of income upon request. All documentation is ready to share.
 
----
-This notification was sent by Dublin Rental Hunter.
+I would be grateful for the opportunity to view the property and discuss the tenancy further.
+
+Property link: {property_url}
+
+Kind regards,
+{user_name}
+Phone: {user_phone}
+Email: {user_email}

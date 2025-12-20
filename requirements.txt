@@ -1,5 +1,20 @@
-requests>=2.31.0
-beautifulsoup4>=4.12.0
-pyyaml>=6.0
+# Scraping Daft.ie
+daftlistings>=2.0.0
+
+# Parsing RSS feeds from Rent.ie
+feedparser>=6.0.0
+
+# HTTP requests for scrapers and ntfy
+requests>=2.28.0
+
+# Loading environment variables
 python-dotenv>=1.0.0
-lxml>=4.9.0
+
+# Parsing config.yaml
+pyyaml>=6.0
+
+# Running periodic scraping jobs
+schedule>=1.2.0
+
+# Tiny web server for email approval buttons
+flask>=3.0.0
