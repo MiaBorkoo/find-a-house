@@ -1,7 +1,4 @@
-# Scraping Daft.ie
-daftlistings>=2.0.0
-
-# Parsing RSS feeds from Rent.ie
+# Parsing RSS feeds (kept for future use)
 feedparser>=6.0.0
 
 # Date parsing for RSS feeds
@@ -9,6 +6,9 @@ python-dateutil>=2.8.0
 
 # HTTP requests for scrapers and ntfy
 requests>=2.28.0
+
+# Browser impersonation for Daft.ie (bypasses bot detection)
+curl_cffi>=0.5.0
 
 # HTML parsing for MyHome.ie scraper
 beautifulsoup4>=4.12.0

@@ -10,9 +10,7 @@
 # -----------------------------------------------------------------------------
 # Your contact details for notifications and landlord inquiries
 user:
-  name: "Your Name"
-  email: "your.email@example.com"
-  phone: "+353 XX XXX XXXX"
+  name: "Mia Borko"
 
 # -----------------------------------------------------------------------------
 # Search Configurations
@@ -20,82 +18,68 @@ user:
 # Define multiple search profiles. Each search can have different criteria.
 # You can enable/disable searches independently using the 'active' flag.
 searches:
-  - name: "City Centre Apartment"
+  # Single room or studio - max 1000/month
+  - name: "Single Room/Studio"
     active: true
-
-    # Price range in EUR per month
-    max_price: 2000
-    min_price: 0  # Optional, defaults to 0
-
-    # Bedroom requirements
-    min_beds: 1
-    max_beds: 2
-
-    # Areas to search (Dublin postcodes or neighborhood names)
-    # Common Dublin areas: Dublin 1-24, Rathmines, Ranelagh, Portobello,
-    # Drumcondra, Phibsborough, Smithfield, Stoneybatter, etc.
+    max_price: 1000
+    min_price: 0
+    min_beds: 0  # 0 = studio
+    max_beds: 1
     areas:
+      - "Dublin 1"
       - "Dublin 2"
       - "Dublin 4"
       - "Dublin 6"
+      - "Dublin 6W"
+      - "Dublin 7"
       - "Dublin 8"
       - "Rathmines"
       - "Ranelagh"
       - "Portobello"
-
-    # Property types to include
-    # Options: apartment, house, studio, flat, duplex, bungalow
+      - "Drumcondra"
+      - "Phibsborough"
     property_types:
+      - room
+      - studio
       - apartment
       - flat
-      - studio
-
-    # Features that MUST be present (listing skipped if missing)
-    # Common options: furnished, parking, balcony, garden, pets allowed,
-    # washing machine, dishwasher, dryer, wifi, central heating
-    must_have:
-      - furnished
-
-    # Features that are preferred but not required
-    # Listings with these features will be highlighted
+    must_have: []
     nice_to_have:
-      - dishwasher
-      - balcony
-      - parking
-
-    # Keywords that will cause a listing to be skipped
-    # Useful for filtering out shares, specific conditions, etc.
+      - furnished
     exclude_keywords:
-      - "sharing"
-      - "shared room"
       - "couple only"
       - "females only"
       - "males only"
-      - "student only"
 
-  # Example of a second search profile (disabled by default)
-  - name: "House in Suburbs"
-    active: false
-    max_price: 2500
-    min_price: 1500
+  # 2-bed shared - max 2000/month (1000 per person)
+  - name: "2-Bed Shared"
+    active: true
+    max_price: 2000
+    min_price: 0
     min_beds: 2
-    max_beds: 3
+    max_beds: 2
     areas:
-      - "Dublin 14"
-      - "Dublin 16"
-      - "Dundrum"
-      - "Stillorgan"
+      - "Dublin 1"
+      - "Dublin 2"
+      - "Dublin 4"
+      - "Dublin 6"
+      - "Dublin 6W"
+      - "Dublin 7"
+      - "Dublin 8"
+      - "Rathmines"
+      - "Ranelagh"
+      - "Portobello"
+      - "Drumcondra"
+      - "Phibsborough"
     property_types:
+      - apartment
+      - flat
       - house
-      - duplex
-    must_have:
-      - parking
-      - garden
+    must_have: []
     nice_to_have:
-      - garage
-      - pets allowed
+      - furnished
     exclude_keywords:
-      - "sharing"
+      - "couple only"
 
 # -----------------------------------------------------------------------------
 # Scraper Settings
@@ -109,12 +93,11 @@ scrapers:
     rate_limit_seconds: 2
 
   rent_ie:
-    enabled: true
-    # Rent.ie uses RSS feeds, so rate limiting is less critical
+    enabled: false  # RSS feeds no longer available
     rate_limit_seconds: 1
 
   myhome:
-    enabled: false  # MyHome.ie scraper not yet implemented
+    enabled: true
     rate_limit_seconds: 2
 
 # -----------------------------------------------------------------------------
