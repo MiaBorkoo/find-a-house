@@ -8,6 +8,7 @@ __pycache__/
 *.pyd
 
 # Database
+data/
 *.db
 
 # Virtual environment

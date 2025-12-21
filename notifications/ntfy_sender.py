@@ -1,9 +1,9 @@
 """ntfy.sh sender for push notifications."""
 
+import json
 import logging
 import os
 import time
-from urllib.parse import quote
 
 import requests
 
@@ -59,52 +59,62 @@ class NtfySender:
             # Format title
             price = listing.get("price", 0)
             bedrooms = listing.get("bedrooms", "?")
-            title = f"🏠 €{price}/mo - {bedrooms} bed"
+            title = f"E{price}/mo - {bedrooms} bed"
 
             # Format message body
             message_lines = [
                 listing.get("title", "New Listing"),
                 "",
-                f"📍 {listing.get('area', 'Dublin')}",
-                f"🛏️ {listing.get('bedrooms', '?')} bed | 🚿 {listing.get('bathrooms', 1)} bath",
-                f"💰 €{price}/month",
-                f"📦 {listing.get('source', 'unknown')}",
+                f"Area: {listing.get('area', 'Dublin')}",
+                f"Beds: {listing.get('bedrooms', '?')} | Baths: {listing.get('bathrooms', 1)}",
+                f"Price: E{price}/month",
+                f"Source: {listing.get('source', 'unknown')}",
                 "",
                 listing.get("url", ""),
             ]
             message = "\n".join(message_lines)
 
-            # Build headers
-            headers = {
-                "Title": title,
-                "Priority": self.priority,
-                "Tags": "house,dublin",
+            # Build JSON payload
+            payload = {
+                "topic": self.topic,
+                "title": title,
+                "message": message,
+                "priority": self._priority_to_int(self.priority),
+                "tags": ["house"],
             }
 
-            # Add action buttons
+            # Add click action
             listing_url = listing.get("url", "")
+            if listing_url:
+                payload["click"] = listing_url
+
+            # Add action buttons
             listing_id = listing.get("id", "")
+            actions = []
+
+            if listing_url:
+                actions.append({
+                    "action": "view",
+                    "label": "View Listing",
+                    "url": listing_url,
+                })
 
             if server_base_url and listing_id:
-                # View listing + Send email buttons
-                actions = (
-                    f"view, View Listing, {listing_url}; "
-                    f"http, 📧 Send Email, {server_base_url}/email/{listing_id}, method=POST, clear=true"
-                )
-                headers["Actions"] = actions
-            elif listing_url:
-                # Just view button
-                headers["Actions"] = f"view, View Listing, {listing_url}"
+                actions.append({
+                    "action": "http",
+                    "label": "Send Email",
+                    "url": f"{server_base_url}/email/{listing_id}",
+                    "method": "POST",
+                    "clear": True,
+                })
 
-            # Click action opens listing URL
-            if listing_url:
-                headers["Click"] = listing_url
+            if actions:
+                payload["actions"] = actions
 
             # Send notification
             response = requests.post(
-                self.url,
-                data=message.encode("utf-8"),
-                headers=headers,
+                self.server,
+                json=payload,
                 timeout=10
             )
 
@@ -144,7 +154,7 @@ class NtfySender:
             # Send summary first if many listings
             if len(listings) > 5:
                 self.send_alert(
-                    f"🏠 {len(listings)} new listings found!",
+                    f"{len(listings)} new listings found!",
                     "Sending individual notifications...",
                     priority="default"
                 )
@@ -180,21 +190,23 @@ class NtfySender:
             return False
 
         try:
-            headers = {
-                "Title": title,
-                "Priority": priority,
-                "Tags": "bell",
+            # Use JSON API to properly handle Unicode/emojis
+            payload = {
+                "topic": self.topic,
+                "title": title,
+                "message": message,
+                "priority": self._priority_to_int(priority),
+                "tags": ["bell"],
             }
 
             response = requests.post(
-                self.url,
-                data=message.encode("utf-8"),
-                headers=headers,
+                self.server,
+                json=payload,
                 timeout=10
             )
 
             if response.status_code == 200:
-                self.logger.info(f"Sent alert: {title}")
+                self.logger.info(f"Sent alert: {title[:50]}")
                 return True
             else:
                 self.logger.error(f"ntfy error {response.status_code}: {response.text}")
@@ -206,6 +218,24 @@ class NtfySender:
         except Exception as e:
             self.logger.error(f"Error sending alert: {e}")
             return False
+
+    def _priority_to_int(self, priority: str) -> int:
+        """Convert priority string to integer.
+
+        Args:
+            priority: Priority string (min, low, default, high, urgent).
+
+        Returns:
+            Priority integer (1-5).
+        """
+        priorities = {
+            "min": 1,
+            "low": 2,
+            "default": 3,
+            "high": 4,
+            "urgent": 5,
+        }
+        return priorities.get(priority.lower(), 3)
 
     def send_stats(self, stats: dict) -> bool:
         """Send daily stats summary.
@@ -222,19 +252,19 @@ class NtfySender:
             contacted = stats.get("contacted", {})
 
             message_lines = [
-                f"📊 Last 24 hours:",
-                f"  • New listings: {total.get('last_24h', 0)}",
-                f"  • Notified: {notified.get('last_24h', 0)}",
-                f"  • Contacted: {contacted.get('last_24h', 0)}",
+                "Last 24 hours:",
+                f"  - New listings: {total.get('last_24h', 0)}",
+                f"  - Notified: {notified.get('last_24h', 0)}",
+                f"  - Contacted: {contacted.get('last_24h', 0)}",
                 "",
-                f"📈 All time:",
-                f"  • Total listings: {total.get('all_time', 0)}",
-                f"  • Active: {stats.get('active', 0)}",
+                "All time:",
+                f"  - Total listings: {total.get('all_time', 0)}",
+                f"  - Active: {stats.get('active', 0)}",
             ]
             message = "\n".join(message_lines)
 
             return self.send_alert(
-                "📊 Dublin Rental Hunter Stats",
+                "Dublin Rental Hunter Stats",
                 message,
                 priority="low"
             )
@@ -250,7 +280,7 @@ class NtfySender:
             True if test notification sent successfully.
         """
         return self.send_alert(
-            "🏠 Dublin Rental Hunter",
-            "Dublin Rental Hunter is connected! 🎉\n\nYou will receive notifications when new listings match your criteria.",
+            "Dublin Rental Hunter",
+            "Dublin Rental Hunter is connected!\n\nYou will receive notifications when new listings match your criteria.",
             priority="default"
         )
