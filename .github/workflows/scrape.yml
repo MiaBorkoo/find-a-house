@@ -1,0 +1,52 @@
+name: Dublin Rental Hunter
+
+on:
+  # Run every 15 minutes
+  schedule:
+    - cron: '*/15 * * * *'
+
+  # Allow manual trigger
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Create data directory
+        run: mkdir -p data
+
+      - name: Download previous database
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          name: rentals-db
+          path: data/
+          if_no_artifact_found: ignore
+        continue-on-error: true
+
+      - name: Run scraper
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: python main.py run
+
+      - name: Upload database artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rentals-db
+          path: data/rentals.db
+          retention-days: 90
+          if-no-files-found: warn

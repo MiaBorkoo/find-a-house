@@ -47,7 +47,7 @@ class Listing:
         """Generate a unique listing ID.
 
         Args:
-            source: The source website (e.g., 'daft', 'rent_ie').
+            source: The source website (e.g., 'daft', 'myhome').
             original_id: The original ID from the source website.
 
         Returns:

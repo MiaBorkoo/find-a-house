@@ -92,10 +92,6 @@ scrapers:
     # Seconds to wait between requests to Daft.ie
     rate_limit_seconds: 2
 
-  rent_ie:
-    enabled: false  # RSS feeds no longer available
-    rate_limit_seconds: 1
-
   myhome:
     enabled: true
     rate_limit_seconds: 2
