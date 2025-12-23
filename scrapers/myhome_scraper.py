@@ -68,7 +68,6 @@ class MyHomeScraper(BaseScraper):
                               "Chrome/120.0.0.0 Safari/537.36",
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "en-IE,en;q=0.9",
-                "Accept-Encoding": "gzip, deflate, br",
                 "Connection": "keep-alive",
             }
 
@@ -474,9 +473,9 @@ class MyHomeScraper(BaseScraper):
             Listing object, or None if essential fields missing.
         """
         try:
-            # Extract URL
+            # Extract URL from first link
             url = ""
-            link = card.find("a", href=True) if card.name != "a" else card
+            link = card.find("a", href=True)
             if link:
                 url = link.get("href", "")
                 if url and not url.startswith("http"):
@@ -485,55 +484,54 @@ class MyHomeScraper(BaseScraper):
             if not url:
                 return None
 
-            # Extract ID from URL or data attribute
-            listing_id = card.get("data-id") or card.get("data-property-id")
-            if not listing_id:
-                listing_id = self._extract_id_from_url(url)
-
+            # Extract ID from URL
+            listing_id = self._extract_id_from_url(url)
             if not listing_id:
                 return None
 
-            # Extract title
-            title = ""
-            title_elem = card.find(class_=re.compile(r"title|address|heading", re.I))
-            if title_elem:
-                title = title_elem.get_text(strip=True)
-            elif link:
-                title = link.get_text(strip=True)
-
-            # Extract price
+            # Extract price from .card-title (MyHome uses this for price)
             price = 0
-            price_elem = card.find(class_=re.compile(r"price", re.I))
+            price_elem = card.find(class_="card-title")
             if price_elem:
                 price = self._normalize_price(price_elem.get_text())
 
-            # Extract bedrooms
-            bedrooms = 0
-            bed_elem = card.find(class_=re.compile(r"bed", re.I))
-            if bed_elem:
-                bedrooms = self._extract_bedrooms(bed_elem.get_text())
-                if bedrooms == -1:
-                    bedrooms = 0
-            else:
-                # Try to find from text content
-                bedrooms = self._extract_bedrooms(card.get_text())
-                if bedrooms == -1:
-                    bedrooms = 0
+            # Extract address from .card-text
+            title = ""
+            title_elem = card.find(class_="card-text")
+            if title_elem:
+                title = title_elem.get_text(strip=True)
 
-            # Extract bathrooms
+            # Fallback to h3 if no card-text
+            if not title:
+                h3 = card.find("h3")
+                if h3:
+                    title = h3.get_text(strip=True)
+
+            # Extract bedrooms/bathrooms from info strip text
+            bedrooms = 0
             bathrooms = 1
-            bath_elem = card.find(class_=re.compile(r"bath", re.I))
-            if bath_elem:
-                bath_text = bath_elem.get_text()
-                bath_match = re.search(r"(\d+)", bath_text)
+            info_strip = card.find(class_=re.compile(r"info-strip|info_strip", re.I))
+            if info_strip:
+                info_text = info_strip.get_text()
+                bed_match = re.search(r"(\d+)\s*(?:bed|Bed)", info_text)
+                if bed_match:
+                    bedrooms = int(bed_match.group(1))
+                bath_match = re.search(r"(\d+)\s*(?:bath|Bath)", info_text)
                 if bath_match:
                     bathrooms = int(bath_match.group(1))
+
+            # Fallback: search full card text
+            if bedrooms == 0:
+                card_text = card.get_text()
+                bed_match = re.search(r"(\d+)\s*(?:bed|Bed)", card_text)
+                if bed_match:
+                    bedrooms = int(bed_match.group(1))
 
             # Extract image
             image_url = ""
             img = card.find("img")
             if img:
-                image_url = img.get("src") or img.get("data-src") or img.get("data-lazy-src", "")
+                image_url = img.get("src") or img.get("data-src") or ""
 
             # Extract area from address
             area = self._extract_area_from_address(title)
@@ -547,7 +545,7 @@ class MyHomeScraper(BaseScraper):
                 bathrooms=bathrooms,
                 property_type="",
                 area=self._normalize_area(area),
-                address=title,  # Often the title is the address
+                address=title,
                 url=url,
                 image_url=image_url,
                 description="",

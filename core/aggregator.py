@@ -6,7 +6,6 @@ from typing import Optional
 
 from scrapers.base_scraper import Listing
 from scrapers.daft_scraper import DaftScraper
-from scrapers.rent_ie_scraper import RentIeScraper
 from scrapers.myhome_scraper import MyHomeScraper
 from core.database import Database
 from core.filter import FilterManager
@@ -38,14 +37,6 @@ class ListingAggregator:
                 self.logger.info("Daft.ie scraper enabled")
             except Exception as e:
                 self.logger.error(f"Failed to initialize Daft scraper: {e}")
-
-        if scraper_config.get("rent_ie", {}).get("enabled", False):
-            try:
-                rent_config = self._build_scraper_config("rent_ie", scraper_config)
-                self.scrapers.append(RentIeScraper(rent_config))
-                self.logger.info("Rent.ie scraper enabled")
-            except Exception as e:
-                self.logger.error(f"Failed to initialize Rent.ie scraper: {e}")
 
         if scraper_config.get("myhome", {}).get("enabled", False):
             try:
