@@ -3,7 +3,7 @@ name: Dublin Rental Hunter
 on:
   # Run every 15 minutes
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '0 * * * *'
 
   # Allow manual trigger
   workflow_dispatch:
